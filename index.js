@@ -15,10 +15,47 @@ const quantity_second = parseFloat(process.env.QUANTITY_SECOND)
 const days = process.env.DAYS || 1
 const interval = 1440 // Tune this to possible values, but 1440 works the best: 1 5 15 30 60 240 1440 10080 21600 minutes, take care because VWAP_MEAN changes by changing this value
 
-const KrakenClient = require('kraken-api');
+const crypto = require('crypto');
 const Decimal = require('decimal.js');
 
-const kraken = new KrakenClient(process.env.KEY, process.env.SECRET);
+const simulator = process.env.SIMULATOR === 'true';
+const baseUrl = 'https://api.kraken.com'; // Always use live for public data, dry-run skips orders
+
+console.log(simulator ? 'Using Kraken API in dry-run mode (no orders placed)' : 'Using Kraken Live API');
+
+async function publicApi(method, params = {}) {
+    const url = new URL(`${baseUrl}/0/public/${method}`);
+    Object.keys(params).forEach(key => url.searchParams.append(key, params[key]));
+    const response = await fetch(url);
+    return response.json();
+}
+
+function getSignature(path, data, secret) {
+    const postData = new URLSearchParams(data).toString();
+    const message = data.nonce + postData;
+    const hash = crypto.createHash('sha256').update(message).digest();
+    const secretBuffer = Buffer.from(secret, 'base64');
+    const hmac = crypto.createHmac('sha512', secretBuffer);
+    hmac.update(path + hash);
+    return hmac.digest('base64');
+}
+
+async function privateApi(method, params = {}) {
+    const path = `/0/private/${method}`;
+    const nonce = Date.now().toString();
+    const data = { nonce, ...params };
+    const signature = getSignature(path, data, process.env.SECRET);
+    const response = await fetch(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: {
+            'API-Key': process.env.KEY,
+            'API-Sign': signature,
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams(data)
+    });
+    return response.json();
+}
 
 let rounder = (num, places, mode) => {
     // (A1) MULTIPLIER
@@ -38,7 +75,7 @@ let rounder = (num, places, mode) => {
 let main = async () => {
     try {
         const since = Math.floor((Date.now() / 1000) - (interval * parseInt(days) * 60));
-        const historicalData = await kraken.api('OHLC', { pair, interval, since })
+        const historicalData = await publicApi('OHLC', { pair, interval, since })
         const ohlcData = historicalData.result[pair]
         const lastOHLC = ohlcData[ohlcData.length - 1]
         const last2WeeksData = historicalData.result[pair];
@@ -69,30 +106,37 @@ let main = async () => {
         }
 
         let volume
-        if (quantity_first === '') {
+        if (quantity_first && !isNaN(quantity_first)) {
             volume = quantity_first
-        } else if (typeof quantity_second === 'number') {
-            volume = (parseFloat(quantity_second)/parseFloat(price))
+        } else {
+            volume = parseFloat(quantity_second) / parseFloat(price)
         }
 
         // Truncate price and volume based on permitted by kraken
-        const data = await kraken.api('AssetPairs');
+        const data = await publicApi('AssetPairs');
+        const pairInfo = data.result[pair];
+        price = parseFloat(price).toFixed(pairInfo.pair_decimals);
+        volume = parseFloat(volume).toFixed(pairInfo.lot_decimals);
 
         const orderParams = {
             pair,
             type: 'buy',
             ordertype: 'limit',
-            price: price.toFixed(data.result[pair].pair_decimals).toString(),
+            price: price,
             volume: volume, // aquí se puede ajustar el volumen a comprar
           };
 
-        const orderResponse = await kraken.api('AddOrder', orderParams);
-        const orderInfo = JSON.stringify(orderResponse)
-            .replace(/[{}]/g, '')
-            .replace(/":/g, ':')
-            .replace(/,"/g, ',')
-            .replace(/"/g, '')
-        console.log(`Order placed: ${orderInfo}`);
+        if (simulator) {
+            console.log('Dry-run mode: Order would be placed with params:', orderParams);
+        } else {
+            const orderResponse = await privateApi('AddOrder', orderParams);
+            const orderInfo = JSON.stringify(orderResponse)
+                .replace(/[{}]/g, '')
+                .replace(/":/g, ':')
+                .replace(/,"/g, ',')
+                .replace(/"/g, '')
+            console.log(`Order placed: ${orderInfo}`);
+        }
 
     } catch (e) {
         console.error(e)
