@@ -31,4 +31,6 @@ It is a small script to do dollar cost averaging of a pair in Kraken exchange us
 
 - `LESS_PERCENTAGE` (optional, default = 0): This parameter specifies the percentage below the average price at which you want to place a limit buy order. For exampl, "0.01" means that you want to place a limit buy order at 1% below the average price.
 
+- `SIMULATOR` (optional, default = false): This parameter specifies whether you want to run the application in simulator mode. If set to true, the application will not place any real orders on Kraken, but will simulate the purchases instead.
+
 These parameters are used to configure the Kraken periodic purchases application and tailor it to your specific needs.

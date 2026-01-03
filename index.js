@@ -33,27 +33,40 @@ async function publicApi(method, params = {}) {
 function getSignature(path, data, secret) {
     const postData = new URLSearchParams(data).toString();
     const message = data.nonce + postData;
-    const hash = crypto.createHash('sha256').update(message).digest();
+    
+    // Hash SHA256 del nonce + postData
+    const hash = crypto.createHash('sha256').update(message).digest('binary');
+    
     const secretBuffer = Buffer.from(secret, 'base64');
     const hmac = crypto.createHmac('sha512', secretBuffer);
-    hmac.update(path + hash);
-    return hmac.digest('base64');
+    
+    // Kraken requiere: HMAC-SHA512 de (path + SHA256(nonce + postData))
+    // Nota el uso de Buffer.concat para unir el path y el hash binario
+    const hmacDigest = hmac.update(Buffer.concat([Buffer.from(path), Buffer.from(hash, 'binary')])).digest('base64');
+    
+    return hmacDigest;
 }
 
 async function privateApi(method, params = {}) {
     const path = `/0/private/${method}`;
-    const nonce = Date.now().toString();
+    const nonce = Date.now();
     const data = { nonce, ...params };
+    
     const signature = getSignature(path, data, process.env.SECRET);
+    
+    const formData = new URLSearchParams(data);
+
     const response = await fetch(`${baseUrl}${path}`, {
         method: 'POST',
         headers: {
             'API-Key': process.env.KEY,
             'API-Sign': signature,
-            'Content-Type': 'application/x-www-form-urlencoded'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json'
         },
-        body: new URLSearchParams(data)
+        body: formData.toString()
     });
+    
     return response.json();
 }
 
@@ -130,6 +143,10 @@ let main = async () => {
             console.log('Dry-run mode: Order would be placed with params:', orderParams);
         } else {
             const orderResponse = await privateApi('AddOrder', orderParams);
+            console.log('Full response:', JSON.stringify(orderResponse, null, 2));
+            if (orderResponse.error && orderResponse.error.length > 0) {
+                console.log('API Error:', orderResponse.error);
+            }
             const orderInfo = JSON.stringify(orderResponse)
                 .replace(/[{}]/g, '')
                 .replace(/":/g, ':')
