@@ -1,13 +1,16 @@
 {
     "name": "dca-kraken",
-    "version": "1.0.1",
-    "description": "",
+    "version": "1.0.2",
+    "description": "Dollar-Cost Averaging script for Kraken cryptocurrency exchange",
     "main": "index.js",
+    "bin": {
+        "dca-kraken": "./index.js"
+    },
     "scripts": {
       "test": "echo \"Error: no test specified\" && exit 1"
     },
-    "keywords": [],
-    "author": "",
+    "keywords": ["dca", "kraken", "cryptocurrency", "trading", "dollar-cost-averaging"],
+    "author": "Tu Nombre",
     "license": "ISC",
     "dependencies": {
       "dotenv": "16.0.3",

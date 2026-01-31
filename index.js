@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 require('dotenv').config({path : process.argv.slice(2)[0]})
 
 const types = {
