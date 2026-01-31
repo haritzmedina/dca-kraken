@@ -36,6 +36,7 @@ const interval = 1440 // Tune this to possible values, but 1440 works the best: 
 const smartPeriod = process.env.SMART_PERIOD || '4_TIMES_MONTH';
 const smartThreshold = parseFloat(process.env.SMART_THRESHOLD_PERCENT || '3');
 const smartThresholds = process.env.SMART_THRESHOLDS || null; // Format: "1:25,3:25,5:25,10:25"
+const smartThresholdReference = process.env.SMART_THRESHOLD_REFERENCE || 'INITIAL'; // INITIAL or PEAK
 const smartFallbackHour = parseInt(process.env.SMART_FALLBACK_HOUR || '22');
 const smartStateFile = process.env.SMART_STATE_FILE || './state.json';
 const binanceCompare = process.env.BINANCE_COMPARE === 'true';
@@ -256,13 +257,16 @@ function initializeState() {
         pair: pair,
         lastPurchase: null,
         pendingFallbackPurchase: false,
+        pendingFallbackBudget: null, // Budget amount for pending fallback
         executedThresholds: [], // Track which thresholds were triggered this period
         purchaseHistory: [], // Full history of all purchases
         insufficientFundsNotifiedPeriodStart: null,
+        periodPeakPrice: null, // Track the highest price seen this period
         config: {
             period: smartPeriod,
             thresholds: smartThresholds || `${smartThreshold}:100`,
-            fallbackHour: smartFallbackHour
+            fallbackHour: smartFallbackHour,
+            thresholdReference: smartThresholdReference
         }
     };
 }
@@ -461,6 +465,37 @@ async function getCurrentPrice() {
     }
 }
 
+async function getPeakPriceInPeriod(startTimestamp) {
+    try {
+        // Get OHLC data from period start to now (using 1-hour candles for precision)
+        const historicalData = await publicApi('OHLC', { 
+            pair, 
+            interval: 60, // 60-minute candles for better precision
+            since: startTimestamp
+        });
+        
+        if (historicalData.error && historicalData.error.length > 0) {
+            throw new Error(`Kraken API error: ${historicalData.error.join(', ')}`);
+        }
+        
+        const ohlcData = historicalData.result[pair];
+        
+        // Find the highest HIGH price in all candles
+        let peakPrice = 0;
+        for (const candle of ohlcData) {
+            const highPrice = parseFloat(candle[2]); // Index 2 is HIGH price
+            if (highPrice > peakPrice) {
+                peakPrice = highPrice;
+            }
+        }
+        
+        return peakPrice;
+    } catch (e) {
+        console.error('Error getting peak price from period:', e.message);
+        throw e;
+    }
+}
+
 // ==================== SIMPLE DCA MODE ====================
 
 async function executeSimpleDCA() {
@@ -522,17 +557,21 @@ async function executeSmartDCA() {
     if (!state.executedThresholds) state.executedThresholds = [];
     if (!state.purchaseHistory) state.purchaseHistory = [];
     if (state.insufficientFundsNotifiedPeriodStart === undefined) state.insufficientFundsNotifiedPeriodStart = null;
+    if (state.periodPeakPrice === undefined) state.periodPeakPrice = null;
+    if (state.pendingFallbackBudget === undefined) state.pendingFallbackBudget = null;
     
     // Check if configuration changed
     const currentConfig = smartThresholds || `${smartThreshold}:100`;
     if (state.config.period !== smartPeriod || 
         state.config.thresholds !== currentConfig ||
-        state.config.fallbackHour !== smartFallbackHour) {
+        state.config.fallbackHour !== smartFallbackHour ||
+        state.config.thresholdReference !== smartThresholdReference) {
         console.log('Configuration changed, updating state...');
         state.config = {
             period: smartPeriod,
             thresholds: currentConfig,
-            fallbackHour: smartFallbackHour
+            fallbackHour: smartFallbackHour,
+            thresholdReference: smartThresholdReference
         };
         saveState(state);
     }
@@ -544,9 +583,10 @@ async function executeSmartDCA() {
     // Reset executed thresholds if new period
     if (!hasPurchasedThisPeriod(state, currentPeriod)) {
         if (state.executedThresholds.length > 0) {
-            console.log('New period detected, resetting executed thresholds...');
+            console.log('New period detected, resetting executed thresholds and peak price...');
             state.executedThresholds = [];
             state.lastPurchase = null;
+            state.periodPeakPrice = null;
             saveState(state);
         }
     }
@@ -565,6 +605,7 @@ async function executeSmartDCA() {
     if (state.pendingFallbackPurchase) {
         console.log('⚠️  Pending fallback purchase detected! Attempting immediate purchase...');
         let currentPrice;
+        const pendingBudget = state.pendingFallbackBudget || (100 - state.executedThresholds.reduce((sum, t) => sum + t.budgetUsed, 0));
         try {
             currentPrice = await getCurrentPrice();
             
@@ -575,38 +616,48 @@ async function executeSmartDCA() {
                 return;
             }
             
-            const remainingBudget = 100 - state.executedThresholds.reduce((sum, t) => sum + t.budgetUsed, 0);
-            await executePurchaseWithTracking(state, currentPrice, remainingBudget, 'FALLBACK_RETRY', 0, currentPeriod, priceComparison);
+            await executePurchaseWithTracking(state, currentPrice, pendingBudget, 'FALLBACK_RETRY', 0, currentPeriod, priceComparison);
             
             state.pendingFallbackPurchase = false;
+            state.pendingFallbackBudget = null;
             saveState(state);
             console.log('✅ Fallback purchase completed successfully!');
             return;
         } catch (e) {
             console.error('❌ Fallback purchase retry failed:', e.message);
             if (isInsufficientFundsError(e)) {
-                const remainingBudget = 100 - state.executedThresholds.reduce((sum, t) => sum + t.budgetUsed, 0);
-                await notifyInsufficientFundsOnce(state, currentPeriod, 'FALLBACK_RETRY', remainingBudget, currentPrice || 0);
+                await notifyInsufficientFundsOnce(state, currentPeriod, 'FALLBACK_RETRY', pendingBudget, currentPrice || 0);
             }
             return;
         }
     }
     
     // Get prices
-    let startPrice, currentPrice;
+    let startPrice, currentPrice, referencePrice, peakPrice;
     try {
         console.log('Fetching prices from Kraken...');
         startPrice = await getPriceAtTimestamp(currentPeriod.startTimestamp);
         currentPrice = await getCurrentPrice();
-        console.log(`Start price: ${startPrice} | Current price: ${currentPrice}`);
+        
+        // Determine reference price based on configuration
+        if (smartThresholdReference === 'PEAK') {
+            peakPrice = await getPeakPriceInPeriod(currentPeriod.startTimestamp);
+            referencePrice = peakPrice;
+            console.log(`Start price: ${startPrice} | Current price: ${currentPrice} | Peak price (from Kraken): ${peakPrice}`);
+            console.log(`Using PEAK strategy: thresholds calculated from period's highest price`);
+        } else {
+            referencePrice = startPrice;
+            console.log(`Start price: ${startPrice} | Current price: ${currentPrice}`);
+            console.log(`Using INITIAL strategy: thresholds calculated from period start`);
+        }
     } catch (e) {
         console.error('❌ Error fetching prices from Kraken:', e.message);
         return;
     }
     
-    // Calculate price change percentage
-    const priceChange = ((currentPrice - startPrice) / startPrice) * 100;
-    console.log(`Price change: ${priceChange.toFixed(2)}%`);
+    // Calculate price change percentage based on reference
+    const priceChange = ((currentPrice - referencePrice) / referencePrice) * 100;
+    console.log(`Price change from reference: ${priceChange.toFixed(2)}%`);
     
     // Check Binance comparison
     const priceComparison = await comparePrices(currentPrice);
@@ -682,6 +733,7 @@ async function executeSmartDCA() {
                     await notifyInsufficientFundsOnce(state, currentPeriod, 'FALLBACK', remainingBudget, currentPrice);
                 }
                 state.pendingFallbackPurchase = true;
+                state.pendingFallbackBudget = remainingBudget;
                 saveState(state);
             }
         } else {

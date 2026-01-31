@@ -95,6 +95,7 @@ SIMULATOR=false
 | `SMART_PERIOD` | ❌ | `4_TIMES_MONTH` | Purchase frequency |
 | `SMART_THRESHOLDS` | ❌ | - | Multiple thresholds (advanced) |
 | `SMART_THRESHOLD_PERCENT` | ❌ | `3` | Single threshold (legacy) |
+| `SMART_THRESHOLD_REFERENCE` | ❌ | `INITIAL` | Reference price: `INITIAL` or `PEAK` |
 | `SMART_FALLBACK_HOUR` | ❌ | `22` | Hour (0-23) for fallback purchase |
 | `SMART_STATE_FILE` | ❌ | `./state.json` | File to store purchase history |
 | `BINANCE_COMPARE` | ❌ | `false` | Compare prices with Binance |
@@ -110,6 +111,37 @@ SIMULATOR=false
 - `2_TIMES_MONTH`: Days 1-15 and 16-end
 - `3_TIMES_MONTH`: Days 1-10, 11-20, 21-end
 - `4_TIMES_MONTH`: Days 1-7, 8-14, 15-21, 22-end
+
+**SMART_THRESHOLD_REFERENCE Options:**
+
+Choose how thresholds are calculated:
+
+- **`INITIAL`** (default): Thresholds calculated from period **start price**
+  - Simple and predictable behavior
+  - Example: Period starts at 100€, -3% threshold = 97€
+  - Best for: Stable markets, predictable entries
+
+- **`PEAK`** (recommended for volatile assets): Thresholds calculated from period's **highest price**
+  - Captures real drops from recent peaks
+  - Automatically tracks the maximum price during the period
+  - Example: Period starts at 100€, rises to 110€ (peak), -3% threshold = 106.7€
+  - Better captures corrections after rallies within the period
+  - Best for: Bitcoin and volatile cryptocurrencies
+
+**Comparison Example:**
+```
+Day 1: Price 45,000€ (period starts)
+Day 3: Price rises to 48,000€ (new peak)
+Day 4: Price drops to 46,500€
+
+INITIAL strategy:
+  - Reference: 45,000€
+  - Change: +3.3% (no purchase, still above start)
+  
+PEAK strategy:
+  - Reference: 48,000€ (tracked peak)
+  - Change: -3.1% (purchase triggered at -3% threshold!)
+```
 
 **SMART_THRESHOLDS Format** (Multiple Thresholds - Advanced DCA):
 ```
