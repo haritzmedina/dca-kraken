@@ -189,6 +189,29 @@ function parseThresholds() {
     }).sort((a, b) => a.percent - b.percent); // Sort by threshold ascending
 }
 
+function isInsufficientFundsError(error) {
+    const message = (error && error.message) ? error.message : String(error || '');
+    return message.toLowerCase().includes('insufficient funds');
+}
+
+async function notifyInsufficientFundsOnce(state, currentPeriod, trigger, budgetPercent, price) {
+    const periodKey = currentPeriod.start.toISOString();
+    if (state.insufficientFundsNotifiedPeriodStart === periodKey) {
+        return;
+    }
+
+    const message = `⚠️ <b>Insufficient Funds</b>\n\n` +
+        `Pair: ${pair}\n` +
+        `Trigger: ${trigger}\n` +
+        `Price: ${price}€\n` +
+        `Budget: ${budgetPercent}%\n\n` +
+        `💡 Add funds to continue automatic purchases.`;
+
+    await sendTelegram(message);
+    state.insufficientFundsNotifiedPeriodStart = periodKey;
+    saveState(state);
+}
+
 let rounder = (num, places, mode) => {
     // (A1) MULTIPLIER
     let mult = parseInt("1" + "0".repeat(places));
@@ -235,6 +258,7 @@ function initializeState() {
         pendingFallbackPurchase: false,
         executedThresholds: [], // Track which thresholds were triggered this period
         purchaseHistory: [], // Full history of all purchases
+        insufficientFundsNotifiedPeriodStart: null,
         config: {
             period: smartPeriod,
             thresholds: smartThresholds || `${smartThreshold}:100`,
@@ -497,6 +521,7 @@ async function executeSmartDCA() {
     // Upgrade old state format
     if (!state.executedThresholds) state.executedThresholds = [];
     if (!state.purchaseHistory) state.purchaseHistory = [];
+    if (state.insufficientFundsNotifiedPeriodStart === undefined) state.insufficientFundsNotifiedPeriodStart = null;
     
     // Check if configuration changed
     const currentConfig = smartThresholds || `${smartThreshold}:100`;
@@ -539,8 +564,9 @@ async function executeSmartDCA() {
     // Check if there's a pending fallback purchase from previous failure
     if (state.pendingFallbackPurchase) {
         console.log('⚠️  Pending fallback purchase detected! Attempting immediate purchase...');
+        let currentPrice;
         try {
-            const currentPrice = await getCurrentPrice();
+            currentPrice = await getCurrentPrice();
             
             // Check Binance comparison
             const priceComparison = await comparePrices(currentPrice);
@@ -558,6 +584,10 @@ async function executeSmartDCA() {
             return;
         } catch (e) {
             console.error('❌ Fallback purchase retry failed:', e.message);
+            if (isInsufficientFundsError(e)) {
+                const remainingBudget = 100 - state.executedThresholds.reduce((sum, t) => sum + t.budgetUsed, 0);
+                await notifyInsufficientFundsOnce(state, currentPeriod, 'FALLBACK_RETRY', remainingBudget, currentPrice || 0);
+            }
             return;
         }
     }
@@ -616,6 +646,9 @@ async function executeSmartDCA() {
                 console.log(`✅ Purchase completed for threshold -${threshold.percent}%`);
             } catch (e) {
                 console.error(`❌ Purchase failed for threshold -${threshold.percent}%:`, e.message);
+                if (isInsufficientFundsError(e)) {
+                    await notifyInsufficientFundsOnce(state, currentPeriod, `THRESHOLD_${threshold.percent}`, threshold.budget, currentPrice);
+                }
             }
             
             // Only execute one threshold per run
@@ -645,6 +678,9 @@ async function executeSmartDCA() {
                 console.log(`✅ Fallback purchase completed!`);
             } catch (e) {
                 console.error('❌ Fallback purchase failed:', e.message);
+                if (isInsufficientFundsError(e)) {
+                    await notifyInsufficientFundsOnce(state, currentPeriod, 'FALLBACK', remainingBudget, currentPrice);
+                }
                 state.pendingFallbackPurchase = true;
                 saveState(state);
             }
