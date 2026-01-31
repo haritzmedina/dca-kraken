@@ -2,3 +2,4 @@
 !example.env
 node_modules/*
 *.txt
+state*.json
