@@ -26,9 +26,9 @@ Monitors price changes and purchases when:
 - Price drops by a specified threshold percentage, OR
 - Period ends without a purchase (fallback mechanism)
 
-**Cron example** - Check every 30 minutes:
+**Cron example** - Check every 5 minutes:
 ```bash
-*/30  *  *  *  *  node dca-kraken/index.js dca-kraken/btc-smart.env >> /var/log/dca-kraken-smart.txt 2>&1
+*/5  *  *  *  *  node dca-kraken/index.js dca-kraken/btc-smart.env >> /var/log/dca-kraken-smart.txt 2>&1
 ```
 
 **Key features:**
