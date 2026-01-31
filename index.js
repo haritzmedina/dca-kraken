@@ -678,8 +678,11 @@ async function executeSmartDCA() {
         if (priceChange <= -threshold.percent) {
             console.log(`✅ Threshold -${threshold.percent}% met! (actual: ${priceChange.toFixed(2)}%)`);
             
-            // Send near-threshold notification if we haven't notified for this one
-            await sendTelegram(`🎯 <b>Threshold Triggered!</b>\n\nPair: ${pair}\nThreshold: -${threshold.percent}%\nActual change: ${priceChange.toFixed(2)}%\nCurrent price: ${currentPrice}€\n\n💰 Purchasing ${threshold.budget}% of budget...`);
+            // Send threshold notification only if we haven't notified insufficient funds for this period
+            const periodKey = currentPeriod.start.toISOString();
+            if (state.insufficientFundsNotifiedPeriodStart !== periodKey) {
+                await sendTelegram(`🎯 <b>Threshold Triggered!</b>\n\nPair: ${pair}\nThreshold: -${threshold.percent}%\nActual change: ${priceChange.toFixed(2)}%\nCurrent price: ${currentPrice}€\n\n💰 Purchasing ${threshold.budget}% of budget...`);
+            }
             
             try {
                 await executePurchaseWithTracking(state, currentPrice, threshold.budget, `THRESHOLD_${threshold.percent}`, threshold.percent, currentPeriod, priceComparison);
@@ -769,6 +772,9 @@ async function executePurchaseWithTracking(state, price, budgetPercent, trigger,
     
     state.purchaseHistory.push(purchase);
     state.lastPurchase = purchase;
+    
+    // Reset insufficient funds notification flag since purchase succeeded
+    state.insufficientFundsNotifiedPeriodStart = null;
     
     // Send success notification
     const message = `✅ <b>Purchase Executed!</b>\n\n` +
