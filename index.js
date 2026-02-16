@@ -617,7 +617,13 @@ async function executeSmartDCA() {
             }
             
             await executePurchaseWithTracking(state, currentPrice, pendingBudget, 'FALLBACK_RETRY', 0, currentPeriod, priceComparison);
-            
+
+            state.executedThresholds.push({
+                thresholdPercent: null,
+                budgetUsed: pendingBudget,
+                timestamp: new Date().toISOString(),
+                priceChange: 0
+            });
             state.pendingFallbackPurchase = false;
             state.pendingFallbackBudget = null;
             saveState(state);
@@ -729,6 +735,13 @@ async function executeSmartDCA() {
             
             try {
                 await executePurchaseWithTracking(state, currentPrice, remainingBudget, 'FALLBACK', 0, currentPeriod, priceComparison);
+                state.executedThresholds.push({
+                    thresholdPercent: null,
+                    budgetUsed: remainingBudget,
+                    timestamp: new Date().toISOString(),
+                    priceChange: 0
+                });
+                saveState(state);
                 console.log(`✅ Fallback purchase completed!`);
             } catch (e) {
                 console.error('❌ Fallback purchase failed:', e.message);
