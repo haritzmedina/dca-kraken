@@ -132,16 +132,53 @@ async function sendTelegram(message) {
 
 async function getBinancePrice(symbol) {
     try {
-        // Convert pair format: XXBTZEUR -> BTCEUR
-        let binanceSymbol = symbol.replace('XXB', '').replace('XBT', 'BTC');
+        const normalizeKrakenPairToBinance = (pairSymbol) => {
+            const baseMap = {
+                XBT: 'BTC',
+                XDG: 'DOGE'
+            };
+
+            const quoteAssets = ['USDT', 'FDUSD', 'USDC', 'BUSD', 'TUSD', 'EUR', 'USD', 'GBP', 'JPY', 'TRY', 'BRL', 'AUD'];
+            let normalized = String(pairSymbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+            let quote = '';
+            for (const quoteAsset of quoteAssets) {
+                if (normalized.endsWith(`Z${quoteAsset}`)) {
+                    quote = quoteAsset;
+                    normalized = normalized.slice(0, -(quoteAsset.length + 1));
+                    break;
+                }
+                if (normalized.endsWith(quoteAsset)) {
+                    quote = quoteAsset;
+                    normalized = normalized.slice(0, -quoteAsset.length);
+                    break;
+                }
+            }
+
+            let base = normalized;
+            while (base.length > 3 && (base.startsWith('X') || base.startsWith('Z'))) {
+                base = base.slice(1);
+            }
+
+            base = baseMap[base] || base;
+            return quote ? `${base}${quote}` : base;
+        };
+
+        const binanceSymbol = normalizeKrakenPairToBinance(symbol);
         
         const url = `https://api.binance.com/api/v3/ticker/price?symbol=${binanceSymbol}`;
         const response = await fetch(url);
         const data = await response.json();
+
+        if (!response.ok) {
+            console.error(`Binance API error for ${binanceSymbol}:`, data.msg || data.code || response.status);
+            return null;
+        }
         
         if (data.price) {
             return parseFloat(data.price);
         }
+        console.error(`Binance response without price for ${binanceSymbol}:`, data);
         return null;
     } catch (e) {
         console.error('Error fetching Binance price:', e.message);

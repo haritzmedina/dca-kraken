@@ -48,12 +48,14 @@ Monitors price changes and purchases when:
 |----------|----------|-------------|---------|
 | `KEY` | ✅ | Kraken API key | `your_api_key` |
 | `SECRET` | ✅ | Kraken API secret | `your_secret` |
-| `PAIR` | ✅ | Trading pair | `BTCEUR`, `DOTEUR` |
+| `PAIR` | ✅ | Trading pair (Kraken format) | `BTCEUR`, `DOTEUR`, `XXBTZEUR` |
 | `QUANTITY_FIRST` | ⚠️ | Amount of first coin to purchase | `0.001` (for BTC) |
 | `QUANTITY_SECOND` | ⚠️ | Amount of second coin to spend | `50` (50 EUR) |
 | `SIMULATOR` | ❌ | Dry-run mode (doesn't place orders) | `true` or `false` |
 
 > **Note:** Choose **either** `QUANTITY_FIRST` or `QUANTITY_SECOND`, not both.
+>
+> **PAIR compatibility:** Both standard pairs (`BTCEUR`) and Kraken-prefixed pairs (`XXBTZEUR`) are supported. When `BINANCE_COMPARE=true`, the script automatically normalizes Kraken symbols to Binance format.
 
 ---
 
